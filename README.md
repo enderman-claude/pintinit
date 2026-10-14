@@ -35,7 +35,7 @@ This is a real experiment with real processes, not a simulation of an init syste
 - **PID 1 operation:** the main programme checks that it is running as PID 1.
 - **Configurable services:** startup commands are read from `/etc/pintinit/config.py`.
 - **Process monitoring:** services are polled and unexpected exits trigger restart attempts.
-- **One-shot service option:** service definitions can indicate that a successful exit is expected, although the current monitoring loop does not consistently honour this setting.
+- **One-shot service option:** service definitions can indicate that a successful exit is expected. The monitoring loop does not restart a one-shot service that exits with status 0.
 - **Local control socket:** Pintinit listens at `/run/pintinit.sock` for JSON-encoded command arguments.
 - **Shutdown command:** the control interface can request a service shutdown sequence followed by a Linux power-off syscall.
 - **Boot and runtime output:** startup messages appear on the console, with additional logging support for `/dev/tty8` and `/var/log/pintinit.log`.
@@ -54,6 +54,7 @@ You will need:
 - BusyBox
 - QEMU (`qemu-system-x86_64`)
 - A Linux kernel at `/boot/vmlinuz-linux` for the current test script
+- `patchelf`, which Nuitka requires for standalone builds on Linux
 - Standard build utilities including Bash, `cpio`, `gzip`, `readelf`, `ldconfig`, `agetty`, and `login`
 
 The build script installs Python requirements from `requirements.txt` into a local virtual environment. Other system dependencies must be available separately.
@@ -134,7 +135,7 @@ services = [
 | `0` | Service name | Used to identify the service |
 | `1` | Description | Present in the configuration, not yet used by the service manager |
 | `2` | Command | Executable and arguments passed to `subprocess.Popen()` |
-| `3` | One-shot flag | Passed to the start routine, but not consistently respected during later monitoring |
+| `3` | One-shot flag | Passed to the start routine and used by the monitoring loop, so a status-0 exit is not treated as a crash |
 | `4` | Requirements | Reserved for dependencies; not yet enforced |
 
 Commands must be provided as a list of separate arguments. Pintinit does not automatically run them through a shell.
@@ -155,11 +156,11 @@ For example, the implemented command is:
 pintinitctl shutdown
 ```
 
-**Naming note:** The client prints `pintinitctl` in its usage message, but the current Nuitka build uses the source filename `mainctl.py` and therefore produces `mainctl.bin`. The final executable name is still being tidied up. Until then, invoke the actual generated binary, such as `final_dist/sbin/mainctl.bin`, rather than assuming `pintinitctl` is installed.
+**Naming note:** The Nuitka build of `mainctl.py` produces the binary `pintinitctl`, which `build.sh` copies to `final_dist/sbin/pintinitctl`.
 
 The socket is created with permissions `0600`, so control normally requires the appropriate privileges.
 
-The current protocol is **one-way**: the client sends a command but does not receive confirmation that the operation completed. Commands such as `start`, `stop`, `restart`, and `status` are not implemented in the command handler yet, even though the client can send their names.
+The current protocol is **one-way**: the client sends a command but does not receive confirmation that the operation completed. The client forwards any arguments it is given, but the command handler only acts on `shutdown`. `start`, `stop`, `restart`, and `status` are not implemented.
 
 ## How it works
 
@@ -179,14 +180,12 @@ Pintinit currently uses a straightforward single-process control loop rather tha
 
 Pintinit is under active development. Current limitations include:
 
-- **Service restart tracking:** the failed-service data structure is inconsistent across some code paths, which can cause errors during repeated failures.
-- **One-shot handling:** successful exits may still be treated as failures by the monitoring loop.
+- **Service restart tracking:** the failed-service data structure is inconsistent across some code paths, which can cause errors during repeated failures. The fix is in PR #1 and is not yet merged into this branch.
 - **Restart policy:** there is no reliable restart backoff or complete crash-limit enforcement.
 - **Dependencies:** service requirement lists are defined but not processed.
 - **Command coverage:** only `shutdown` is handled; other management commands remain to be implemented.
 - **Command responses:** the client cannot currently verify that Pintinit acted on a request.
 - **Blocking operations:** service start and stop routines can delay command handling.
-- **Shutdown synchronisation:** the shutdown handler prints `libc.sync()` but does not actually call it.
 - **Portability:** the test scripts make x86-64 and host-specific assumptions, including the kernel path.
 - **Installation:** there is no supported procedure for safely replacing an existing system init.
 
@@ -206,7 +205,7 @@ pintinit/
 └── all.sh           # Prerequisites, build, then test
 ```
 
-Generated directories such as `build/`, `build_ctl/`, `fakefs/`, `final_dist/`, and `venv/` may also appear locally.
+`build_ctl/` and `final_dist/` are generated, but they are committed to the repository. `build/`, `fakefs/`, and `venv/` are git-ignored and created locally.
 
 ## Roadmap
 
